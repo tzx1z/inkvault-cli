@@ -1,0 +1,39 @@
+[package]
+name = "inkvault-cli"
+version = "0.1.0"
+authors = ["Evgeny Inkov <me@inkov.dev>"]
+edition = "2024"
+license = "AGPL-3.0-only"
+rust-version = "1.85"
+description = "Терминальный клиент InkVault: менеджер паролей с синхронизацией через XMPP"
+repository = "https://gitlab.com/inkvault/inkvault-cli"
+homepage = "https://inkov.dev"
+
+[[bin]]
+name = "inkvault"
+path = "src/main.rs"
+
+[dependencies]
+inkvault-core = { git = "https://gitlab.com/inkvault/inkvault-core.git", tag = "v0.1.0" }
+base64 = "0.23"
+clap = { version = "4.6", features = ["derive"] }
+directories = "6"
+futures-util = "0.3"
+rpassword = "7.5"
+sasl = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt", "signal", "sync", "time"] }
+# ring вместо aws-lc-rs по умолчанию: для aws-lc-rs нужны cmake и долгая сборка C-кода, в том числе под musl;
+# insecure-tcp - вход без TLS только на адрес loopback (тестовый Prosody), проверка в xmpp.rs
+tokio-xmpp = { version = "6.0", default-features = false, features = ["starttls", "ring", "rustls-native-certs", "insecure-tcp"] }
+zeroize = { version = "1.9", features = ["serde"] }
+
+# Argon2 без оптимизаций работает в десятки раз медленнее, тесты с реальными параметрами не дождаться
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
