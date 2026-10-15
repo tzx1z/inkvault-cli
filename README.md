@@ -29,6 +29,26 @@
 cargo install --locked --git https://gitlab.com/inkvault/inkvault-cli.git --tag v0.1.0
 ```
 
+### Доступ к закрытым репозиториям
+
+Пока репозитории `inkvault-cli` и `inkvault-core` на GitLab закрыты, HTTPS-адреса без авторизации не работают. Нужен SSH-ключ, добавленный в GitLab. Git подменяет HTTPS-адреса группы на SSH, Cargo загружает репозитории системным git:
+
+```sh
+git config --global url."git@gitlab.com:inkvault/".insteadOf "https://gitlab.com/inkvault/"
+CARGO_NET_GIT_FETCH_WITH_CLI=true cargo install --locked --git https://gitlab.com/inkvault/inkvault-cli.git --tag v0.1.0
+```
+
+В клоне репозитория `cargo build` включает системный git сам (`.cargo/config.toml`), достаточно подмены адресов.
+
+В CI вместо личного ключа подходят:
+
+- deploy key: SSH-ключ с доступом на чтение, добавленный в `inkvault-cli` и `inkvault-core`; ключ загружается в `ssh-agent`, подмена адресов та же;
+- токен задания GitLab CI: проект `inkvault-cli` добавляется в список доступа токена в настройках `inkvault-core` (CI/CD - Job token permissions), адреса подменяются так:
+
+```sh
+git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/inkvault/".insteadOf "https://gitlab.com/inkvault/"
+```
+
 ## Начало работы
 
 Хранилище создается в web- или Android-клиенте. CLI входит в уже созданное хранилище.
