@@ -206,14 +206,15 @@ pub fn find<'a>(entries: &'a [Entry], query: &str, user: Option<&str>) -> Result
     };
     match found.as_slice() {
         [one] => Ok(one),
-        [] => Err(format!("запись не найдена: {query}")),
+        [] => Err(tr!("item not found: {query}", "запись не найдена: {query}")),
         many => {
             let list: Vec<String> = many
                 .iter()
                 .take(10)
                 .map(|e| format!("  {} ({}) {}", e.field(NAME), e.field(USERNAME), e.id))
                 .collect();
-            Err(format!(
+            Err(tr!(
+                "items matching {query:?}: {}, refine the name or specify --user\n{}",
                 "под запрос {query:?} подходит записей: {}, уточните название или укажите --user\n{}",
                 many.len(),
                 list.join("\n")
@@ -259,12 +260,12 @@ mod tests {
     fn ambiguous_and_missing_are_errors() {
         let entries = sample();
         let err = find(&entries, "prod-db", None).unwrap_err();
-        assert!(err.contains("записей: 2"), "{err}");
+        assert!(err.contains("\"prod-db\": 2"), "{err}");
         assert!(find(&entries, "github", None).is_err());
         assert!(
             find(&entries, "gitlab", None)
                 .unwrap_err()
-                .starts_with("запись не найдена")
+                .starts_with("item not found")
         );
         assert_eq!(find(&entries, "prod-db", Some("readonly")).unwrap().id, "4");
         assert!(find(&entries, "prod-db", Some("nobody")).is_err());

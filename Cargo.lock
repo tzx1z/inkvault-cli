@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "inkvault-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -871,8 +871,8 @@ dependencies = [
 
 [[package]]
 name = "inkvault-core"
-version = "0.1.0"
-source = "git+https://gitlab.com/inkvault/inkvault-core.git?tag=v0.1.0#09f7f5bf58b2e0e868dd4016ab94cbc8740e0975"
+version = "0.2.0"
+source = "git+https://gitlab.com/inkvault/inkvault-core.git?tag=v0.2.0#88074ab335bd662d0c9c1db65f598125065f4d0b"
 dependencies = [
  "argon2",
  "base64 0.23.1",
@@ -884,7 +884,6 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "sha2 0.11.0",
- "thiserror",
  "zeroize",
 ]
 

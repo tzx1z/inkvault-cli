@@ -64,11 +64,17 @@ impl Server {
             return Ok(Self::Srv);
         };
         if let Some(addr) = value.strip_prefix("tcp://") {
-            let addr: SocketAddr = addr
-                .parse()
-                .map_err(|_| format!("адрес без TLS указывается как tcp://IP:порт, получено {value}"))?;
+            let addr: SocketAddr = addr.parse().map_err(|_| {
+                tr!(
+                    "an address without TLS is given as tcp://IP:port, got {value}",
+                    "адрес без TLS указывается как tcp://IP:порт, получено {value}"
+                )
+            })?;
             if !addr.ip().is_loopback() {
-                return Err("вход без TLS разрешен только на адрес loopback (127.0.0.1 или ::1)".to_owned());
+                return Err(tr!(
+                    "sign-in without TLS is only allowed to a loopback address (127.0.0.1 or ::1)",
+                    "вход без TLS разрешен только на адрес loopback (127.0.0.1 или ::1)"
+                ));
             }
             return Ok(Self::Plain(addr));
         }
@@ -80,13 +86,18 @@ impl Server {
         }
         let (host, port) = match value.rsplit_once(':') {
             Some((host, port)) if !host.contains(':') => {
-                let port = port.parse().map_err(|_| format!("неверный порт в адресе {value}"))?;
+                let port = port
+                    .parse()
+                    .map_err(|_| tr!("invalid port in the address {value}", "неверный порт в адресе {value}"))?;
                 (host, port)
             }
             _ => (value.trim_start_matches('[').trim_end_matches(']'), DEFAULT_PORT),
         };
         if host.is_empty() || host.contains('/') {
-            return Err(format!("неверный адрес сервера: {value}"));
+            return Err(tr!(
+                "invalid server address: {value}",
+                "неверный адрес сервера: {value}"
+            ));
         }
         Ok(Self::StartTls {
             host: host.to_owned(),
@@ -129,8 +140,12 @@ impl fmt::Display for IqError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Stanza(e) => f.write_str(&condition(e)),
-            Self::Lost => f.write_str("соединение прервано"),
-            Self::Timeout => write!(f, "сервер не ответил за {} с", IQ_TIMEOUT.as_secs()),
+            Self::Lost => f.write_str(&tr!("connection lost", "соединение прервано")),
+            Self::Timeout => f.write_str(&tr!(
+                "the server did not respond within {} s",
+                "сервер не ответил за {} с",
+                IQ_TIMEOUT.as_secs()
+            )),
         }
     }
 }
@@ -254,8 +269,11 @@ fn open<C: ServerConnector>(
 
 fn describe(err: &Error) -> String {
     match err {
-        Error::Auth(_) => format!("вход в XMPP не выполнен, проверьте JID и пароль XMPP ({err})"),
-        other => format!("сервер недоступен: {other}"),
+        Error::Auth(_) => tr!(
+            "XMPP sign-in failed, check the JID and the XMPP password ({err})",
+            "вход в XMPP не выполнен, проверьте JID и пароль XMPP ({err})"
+        ),
+        other => tr!("server unavailable: {other}", "сервер недоступен: {other}"),
     }
 }
 

@@ -16,6 +16,7 @@
 - Работа без сети: записи читаются из зашифрованного кэша, изменения отправляются после подключения.
 - Смена мастер-пароля.
 - Просмотр и изменение лимита записей узла хранилища на сервере.
+- Сообщения и справка на английском и русском. Язык берется из первой непустой переменной `LC_ALL`, `LC_MESSAGES`, `LANG`: для локали `ru` (например, `ru_RU.UTF-8`) - русский, для остальных - английский. Встроенные тексты разбора аргументов (`Usage`, `error:`) всегда на английском.
 
 Поддерживаются Linux и macOS. Windows не поддерживается: агенту нужен unix-сокет.
 
@@ -26,7 +27,7 @@
 Сборка из исходников (нужен Rust 1.85 или новее):
 
 ```sh
-cargo install --locked --git https://gitlab.com/inkvault/inkvault-cli.git --tag v0.1.0
+cargo install --locked --git https://gitlab.com/inkvault/inkvault-cli.git --tag v0.2.0
 ```
 
 ### Доступ к закрытым репозиториям
@@ -35,7 +36,7 @@ cargo install --locked --git https://gitlab.com/inkvault/inkvault-cli.git --tag 
 
 ```sh
 git config --global url."git@gitlab.com:inkvault/".insteadOf "https://gitlab.com/inkvault/"
-CARGO_NET_GIT_FETCH_WITH_CLI=true cargo install --locked --git https://gitlab.com/inkvault/inkvault-cli.git --tag v0.1.0
+CARGO_NET_GIT_FETCH_WITH_CLI=true cargo install --locked --git https://gitlab.com/inkvault/inkvault-cli.git --tag v0.2.0
 ```
 
 В клоне репозитория `cargo build` включает системный git сам (`.cargo/config.toml`), достаточно подмены адресов.
@@ -117,7 +118,7 @@ inkvault max-items 10000
 | `unlock` | разблокировать хранилище, агент держит ключи в памяти |
 | `lock` | заблокировать хранилище |
 | `logout` | заблокировать и удалить данные устройства: вход, пароль XMPP и кэш |
-| `status` | состояние агента и соединения |
+| `status` | учетная запись (JID), состояние агента и соединения |
 | `ls [ЗАПРОС]` | список записей без паролей, фильтр по названию, адресу, логину или тегу |
 | `get ЗАПРОС` | значение поля, по умолчанию пароль; `--json` - вся запись |
 | `otp ЗАПРОС` | текущий код TOTP |

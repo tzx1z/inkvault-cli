@@ -44,8 +44,12 @@ impl Store {
                 dir,
             });
         }
-        let dirs = directories::ProjectDirs::from("dev", "inkov", "inkvault")
-            .ok_or("не удалось определить домашний каталог пользователя")?;
+        let dirs = directories::ProjectDirs::from("dev", "inkov", "inkvault").ok_or_else(|| {
+            tr!(
+                "could not determine the home directory of the user",
+                "не удалось определить домашний каталог пользователя"
+            )
+        })?;
         let dir = dirs.data_dir().to_path_buf();
         let socket = dirs
             .runtime_dir()
@@ -121,7 +125,10 @@ impl Store {
     // id хранилища приходит с сервера и становится именем файла
     fn snapshot_path(&self, vault_id: &str) -> Result<PathBuf, String> {
         if vault_id.is_empty() || !vault_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-            return Err(format!("недопустимый id хранилища: {vault_id:?}"));
+            return Err(tr!(
+                "invalid vault id: {vault_id:?}",
+                "недопустимый id хранилища: {vault_id:?}"
+            ));
         }
         Ok(self.dir.join(format!("{vault_id}.{SNAPSHOT_EXT}")))
     }

@@ -110,14 +110,17 @@ impl Shared {
         let Some((other, record, _)) = same else {
             return Ok(());
         };
-        let login = match username {
-            "" => "без логина".to_owned(),
-            _ => format!("с логином {username}"),
-        };
-        Err(format!(
-            "запись {} {login} уже есть: {other}",
-            record.get(proto::NAME).unwrap_or_default()
-        ))
+        let name = record.get(proto::NAME).unwrap_or_default();
+        Err(match username {
+            "" => tr!(
+                "the item {name} without a username already exists: {other}",
+                "запись {name} без логина уже есть: {other}"
+            ),
+            _ => tr!(
+                "the item {name} with the username {username} already exists: {other}",
+                "запись {name} с логином {username} уже есть: {other}"
+            ),
+        })
     }
 
     fn status(&self, timeout: Option<Duration>) -> Status {
@@ -145,7 +148,8 @@ pub fn main(store: Store) -> Result<(), String> {
         .lock()
         .read_line(&mut line)
         .map_err(|e| format!("stdin: {e}"))?;
-    let start: Start = serde_json::from_str(&line).map_err(|e| format!("неверные параметры запуска: {e}"))?;
+    let start: Start = serde_json::from_str(&line)
+        .map_err(|e| tr!("invalid start parameters: {e}", "неверные параметры запуска: {e}"))?;
     drop(line);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -197,7 +201,7 @@ struct Agent {
 
 fn bind(path: &Path) -> Result<UnixListener, String> {
     if std::os::unix::net::UnixStream::connect(path).is_ok() {
-        return Err("агент уже запущен".to_owned());
+        return Err(tr!("the agent is already running", "агент уже запущен"));
     }
     // сокет от завершившегося агента
     let _ = fs::remove_file(path);
@@ -207,16 +211,19 @@ fn bind(path: &Path) -> Result<UnixListener, String> {
 }
 
 fn full_jid(jid: &BareJid, resource: &str) -> Result<FullJid, String> {
-    format!("{jid}/{resource}")
-        .parse()
-        .map_err(|e| format!("неверный ресурс XMPP {resource:?}: {e}"))
+    format!("{jid}/{resource}").parse().map_err(|e| {
+        tr!(
+            "invalid XMPP resource {resource:?}: {e}",
+            "неверный ресурс XMPP {resource:?}: {e}"
+        )
+    })
 }
 
-async fn unlock(account: Account, master: Zeroizing<String>) -> Result<UnlockedAccount, String> {
+/// Внешняя ошибка - сбой задачи, внутренняя - ошибка ядра: по ней видно, что мастер-пароль неверный.
+async fn unlock(account: Account, master: Zeroizing<String>) -> Result<Result<UnlockedAccount, CoreError>, String> {
     // Argon2id занимает поток на сотни миллисекунд
     tokio::task::spawn_blocking(move || account.unlock(&master))
         .await
-        .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
 }
 
@@ -225,7 +232,7 @@ fn first_vault(account: &UnlockedAccount) -> Result<String, String> {
         .vaults()
         .next()
         .map(|(id, _)| id.to_owned())
-        .ok_or_else(|| "в учетной записи нет хранилищ".to_owned())
+        .ok_or_else(|| tr!("the account has no vaults", "в учетной записи нет хранилищ"))
 }
 
 async fn open(store: &Store, start: Start) -> Result<Agent, String> {
@@ -238,9 +245,12 @@ async fn open(store: &Store, start: Start) -> Result<Agent, String> {
             .jid
             .trim()
             .parse()
-            .map_err(|e| format!("неверный JID {:?}: {e}", login.jid))?;
+            .map_err(|e| tr!("invalid JID {:?}: {e}", "неверный JID {:?}: {e}", login.jid))?;
         if jid.node().is_none() {
-            return Err("JID нужно указать в виде имя@сервер".to_owned());
+            return Err(tr!(
+                "the JID must be in the form name@server",
+                "JID нужно указать в виде имя@сервер"
+            ));
         }
         let server = Server::parse(login.server.as_deref())?;
         let node = generate_node_id().map_err(|e| e.to_string())?;
@@ -252,16 +262,31 @@ async fn open(store: &Store, start: Start) -> Result<Agent, String> {
                 Some(Incoming::Online { max_stanza_bytes, .. }) => break max_stanza_bytes,
                 Some(Incoming::Failed(err)) => return Err(err),
                 Some(_) => continue,
-                None => return Err("соединение с сервером закрыто".to_owned()),
+                None => {
+                    return Err(tr!(
+                        "the connection to the server was closed",
+                        "соединение с сервером закрыто"
+                    ));
+                }
             }
         };
         let json = xmpp
             .fetch_account()
             .await
-            .map_err(|e| format!("учетная запись хранилища не загружена: {e}"))?
-            .ok_or("на сервере нет хранилища для этого JID: создайте его в web- или Android-клиенте")?;
+            .map_err(|e| {
+                tr!(
+                    "the vault account was not loaded: {e}",
+                    "учетная запись хранилища не загружена: {e}"
+                )
+            })?
+            .ok_or_else(|| {
+                tr!(
+                    "the server has no vault for this JID: create it in the web or Android client",
+                    "на сервере нет хранилища для этого JID: создайте его в web- или Android-клиенте"
+                )
+            })?;
         let account = Account::from_json(&json).map_err(|e| e.to_string())?;
-        let unlocked = unlock(account, master_password).await?;
+        let unlocked = unlock(account, master_password).await?.map_err(|e| e.to_string())?;
         let vault_id = first_vault(&unlocked)?;
         let vault_key = unlocked.vault_key(&vault_id).map_err(|e| e.to_string())?;
         let sealed = seal_local(vault_key.key.as_ref(), XMPP_SECRET, login.xmpp_password.as_bytes())
@@ -287,21 +312,19 @@ async fn open(store: &Store, start: Start) -> Result<Agent, String> {
         });
     }
 
-    let config = store
-        .config()?
-        .ok_or("нет входа на этом устройстве: выполните inkvault login <JID>")?;
+    let config = store.config()?.ok_or_else(crate::no_login)?;
     let jid: BareJid = config
         .jid
         .parse()
-        .map_err(|e| format!("неверный JID в настройках: {e}"))?;
+        .map_err(|e| tr!("invalid JID in the settings: {e}", "неверный JID в настройках: {e}"))?;
     let account = Account::from_json(&store.account()?).map_err(|e| e.to_string())?;
     // копию с сервера без разблокировки не загрузить: пароль XMPP на устройстве зашифрован ключом хранилища
-    let unlocked = unlock(account, master_password).await.map_err(|err| {
-        if err == CoreError::WrongPassword.to_string() {
-            format!("{err}. Если его сменили на другом устройстве, введите прежний или выполните inkvault login заново")
-        } else {
-            err
-        }
+    let unlocked = unlock(account, master_password).await?.map_err(|err| match err {
+        CoreError::WrongPassword => tr!(
+            "{err}. If it was changed on another device, enter the previous one or run inkvault login again",
+            "{err}. Если его сменили на другом устройстве, введите прежний или выполните inkvault login заново"
+        ),
+        err => err.to_string(),
     })?;
     let vault_id = first_vault(&unlocked)?;
     let vault_key = unlocked.vault_key(&vault_id).map_err(|e| e.to_string())?;
@@ -309,7 +332,12 @@ async fn open(store: &Store, start: Start) -> Result<Agent, String> {
         .ok()
         .and_then(|p| String::from_utf8(p.to_vec()).ok())
         .map(Zeroizing::new)
-        .ok_or("пароль XMPP на устройстве не открывается: выполните inkvault login заново")?;
+        .ok_or_else(|| {
+            tr!(
+                "the XMPP password on this device cannot be opened: run inkvault login again",
+                "пароль XMPP на устройстве не открывается: выполните inkvault login заново"
+            )
+        })?;
     let restored = store
         .snapshot(&vault_id)
         .and_then(|data| SyncEngine::restore(vault_key, NS_VAULT, Limits::default(), &data).ok());
@@ -488,22 +516,32 @@ async fn client(
     }
     let lock_requested = matches!(request, Ok(Request::Lock));
     let reply = match request {
-        Err(err) => Reply::Error(format!("неверный запрос: {err}")),
+        Err(err) => Reply::Error(tr!("invalid request: {err}", "неверный запрос: {err}")),
         Ok(Request::Lock) => Reply::Done,
-        Ok(Request::Sync) => perform(&control, Control::Sync, "синхронизация не завершилась")
-            .await
-            .map_or_else(Reply::Error, |()| Reply::Done),
+        Ok(Request::Sync) => perform(
+            &control,
+            Control::Sync,
+            tr!("sync did not finish", "синхронизация не завершилась"),
+        )
+        .await
+        .map_or_else(Reply::Error, |()| Reply::Done),
         Ok(Request::SetMaxItems { max_items }) => perform(
             &control,
             |done| Control::SetMaxItems { max_items, done },
-            "изменение лимита узла не завершилось",
+            tr!(
+                "changing the node limit did not finish",
+                "изменение лимита узла не завершилось"
+            ),
         )
         .await
         .map_or_else(Reply::Error, |()| Reply::Done),
         Ok(Request::ChangePassword { current, new }) => perform(
             &control,
             |done| Control::ChangePassword { current, new, done },
-            "смена мастер-пароля не завершилась",
+            tr!(
+                "changing the master password did not finish",
+                "смена мастер-пароля не завершилась"
+            ),
         )
         .await
         .map_or_else(Reply::Error, |()| Reply::Done),
@@ -515,7 +553,7 @@ async fn client(
                 sync,
                 done,
             },
-            "добавление записи не завершилось",
+            tr!("adding the item did not finish", "добавление записи не завершилось"),
         )
         .await
         .map_or_else(Reply::Error, Reply::Saved),
@@ -528,14 +566,14 @@ async fn client(
                 sync,
                 done,
             },
-            "правка записи не завершилась",
+            tr!("editing the item did not finish", "правка записи не завершилась"),
         )
         .await
         .map_or_else(Reply::Error, Reply::Saved),
         Ok(Request::Delete { id, sync }) => perform(
             &control,
             |done| Control::Delete { id, sync, done },
-            "удаление записи не завершилось",
+            tr!("deleting the item did not finish", "удаление записи не завершилось"),
         )
         .await
         .map_or_else(Reply::Error, Reply::Saved),
@@ -550,7 +588,7 @@ async fn client(
                 sync,
                 done,
             },
-            "импорт не завершился",
+            tr!("import did not finish", "импорт не завершился"),
         )
         .await
         .map_or_else(Reply::Error, Reply::Imported),
@@ -593,7 +631,8 @@ async fn export(state: &State, password: Zeroizing<String>, master: bool) -> Res
         .export(&password, now_ms())
         .map_err(|e| e.to_string())?;
     if file.len() > proto::MAX_FILE {
-        return Err(format!(
+        return Err(tr!(
+            "the export file is larger than {} MiB, import will not open it",
             "файл экспорта больше {} МиБ, его не откроет импорт",
             proto::MAX_FILE / 1024 / 1024
         ));
@@ -605,7 +644,7 @@ async fn export(state: &State, password: Zeroizing<String>, master: bool) -> Res
 async fn perform<T>(
     control: &mpsc::UnboundedSender<Control>,
     operation: impl FnOnce(Done<T>) -> Control,
-    timeout: &str,
+    timeout: String,
 ) -> Result<T, String> {
     let (done, rx) = oneshot::channel();
     let operation = operation(done);
@@ -613,7 +652,7 @@ async fn perform<T>(
     let _ = control.send(operation);
     match tokio::time::timeout(limit, rx).await {
         Ok(Ok(result)) => result,
-        _ => Err(timeout.to_owned()),
+        _ => Err(timeout),
     }
 }
 
@@ -635,9 +674,15 @@ impl Warnings {
 
     fn summaries(self) -> impl Iterator<Item = String> {
         self.0.into_iter().map(|(kind, count, detail)| match kind {
-            WarningKind::MissingOnServer => format!("на сервер возвращено записей: {count}"),
-            WarningKind::Unreadable => format!("записей с сервера не удалось прочитать: {count} ({detail})"),
-            _ if count > 1 => format!("{detail} (записей: {count})"),
+            WarningKind::MissingOnServer => tr!(
+                "items returned to the server: {count}",
+                "на сервер возвращено записей: {count}"
+            ),
+            WarningKind::Unreadable => tr!(
+                "items from the server that could not be read: {count} ({detail})",
+                "записей с сервера не удалось прочитать: {count} ({detail})"
+            ),
+            _ if count > 1 => tr!("{detail} (items: {count})", "{detail} (записей: {count})"),
             _ => detail,
         })
     }
@@ -800,7 +845,7 @@ impl Syncer {
         Err(match &shared.connection {
             Connection::Failed(err) => err.clone(),
             Connection::Offline(Some(err)) => err.clone(),
-            _ => "нет соединения с сервером".to_owned(),
+            _ => tr!("no connection to the server", "нет соединения с сервером"),
         })
     }
 
@@ -821,8 +866,11 @@ impl Syncer {
         if self.shared().engine.max_items() == max_items {
             Ok(())
         } else {
-            Err(format!(
-                "сервер не принял лимит узла {max_items} записей: на сервере pep_max_items меньше, администратору нужно его поднять"
+            Err(tr!(
+                "the server did not accept the node limit of {max_items} items: \
+                 pep_max_items on the server is lower, the administrator needs to raise it",
+                "сервер не принял лимит узла {max_items} записей: на сервере pep_max_items меньше, \
+                 администратору нужно его поднять"
             ))
         }
     }
@@ -847,12 +895,14 @@ impl Syncer {
         self.store.save_account(&json)?;
         // копия на устройстве уже новая: при следующей сверке ядро выберет ее и потребует публикации
         self.xmpp.publish_account(&json).await.map_err(|e| {
-            format!(
+            tr!(
+                "the master password was changed on this device but not sent to the server ({e}), \
+                 it will be sent on the next connection",
                 "мастер-пароль изменен на этом устройстве, но не отправлен на сервер ({e}), \
                  он будет отправлен при следующем подключении"
             )
         })?;
-        self.notice("мастер-пароль изменен".to_owned());
+        self.notice(tr!("master password changed", "мастер-пароль изменен"));
         Ok(())
     }
 
@@ -865,13 +915,16 @@ impl Syncer {
         match &self.shared().connection {
             Connection::Online => Ok(()),
             // изменение ушло бы на сервер только после нового входа, а вход удаляет неотправленные изменения
-            Connection::Conflict => Err(
+            Connection::Conflict => Err(tr!(
+                "sync stopped: the server has a different vault account, details: inkvault status",
                 "синхронизация остановлена: на сервере другая учетная запись хранилища, подробности: inkvault status"
-                    .to_owned(),
-            ),
+            )),
             Connection::Failed(err) => Err(err.clone()),
             // до конца загрузки записей движок не публикует
-            _ if sync => Err("синхронизация с сервером не завершена, подробности: inkvault status".to_owned()),
+            _ if sync => Err(tr!(
+                "sync with the server is not finished, details: inkvault status",
+                "синхронизация с сервером не завершена, подробности: inkvault status"
+            )),
             _ => Ok(()),
         }
     }
@@ -882,7 +935,7 @@ impl Syncer {
             let mut shared = self.shared();
             let name = fields.get(proto::NAME).map(String::as_str).unwrap_or_default();
             if name.trim().is_empty() {
-                return Err("у записи нет названия".to_owned());
+                return Err(no_name());
             }
             let username = fields.get(proto::USERNAME).map(String::as_str).unwrap_or_default();
             shared.ensure_unique("", name, username)?;
@@ -898,7 +951,12 @@ impl Syncer {
             (id, output, tagged)
         };
         let pending = self.publish(BTreeSet::from([id.clone()]), output, sync).await?;
-        tagged.map_err(|e| format!("запись {id} создана без тегов: {e}"))?;
+        tagged.map_err(|e| {
+            tr!(
+                "the item {id} was created without tags: {e}",
+                "запись {id} создана без тегов: {e}"
+            )
+        })?;
         Ok(Saved { id, pending })
     }
 
@@ -920,7 +978,7 @@ impl Syncer {
                         .map_or(record.get(field).unwrap_or_default(), String::as_str)
                 };
                 if value(proto::NAME).trim().is_empty() {
-                    return Err("у записи нет названия".to_owned());
+                    return Err(no_name());
                 }
                 shared.ensure_unique(&id, value(proto::NAME), value(proto::USERNAME))?;
             }
@@ -976,17 +1034,20 @@ impl Syncer {
             .engine
             .records()
             .any(|(id, _, pending)| pending && ids.contains(id));
-        let what = match (ids.len(), ids.first()) {
-            (1, Some(id)) => format!("записи {id}"),
-            _ => "записей".to_owned(),
+        let changes = match (ids.len(), ids.first()) {
+            (1, Some(id)) => tr!("the changes to the item {id}", "изменения записи {id}"),
+            _ => tr!("the changes to the items", "изменения записей"),
         };
         match (applied, pending) {
-            (Err(err), true) if sync => Err(format!(
-                "изменения {what} сохранены на этом устройстве, но не отправлены на сервер ({err}), \
+            (Err(err), true) if sync => Err(tr!(
+                "{changes} are saved on this device but not sent to the server ({err}), \
+                 they will be sent on the next connection or with inkvault sync",
+                "{changes} сохранены на этом устройстве, но не отправлены на сервер ({err}), \
                  они будут отправлены при следующем подключении или по команде inkvault sync"
             )),
-            (Ok(()), true) if sync => Err(format!(
-                "изменения {what} сохранены на этом устройстве, но сервер их не принял, \
+            (Ok(()), true) if sync => Err(tr!(
+                "{changes} are saved on this device, but the server did not accept them, details: inkvault status",
+                "{changes} сохранены на этом устройстве, но сервер их не принял, \
                  подробности: inkvault status"
             )),
             // без sync или при отправленных записях ошибка остается в уведомлениях inkvault status
@@ -1018,12 +1079,13 @@ impl Syncer {
             .xmpp
             .fetch_account()
             .await
-            .map_err(|e| format!("учетная запись не загружена: {e}"))?;
+            .map_err(|e| tr!("the account was not loaded: {e}", "учетная запись не загружена: {e}"))?;
         let (state, json) = {
             let mut shared = self.shared();
             let state = match &server {
                 Some(json) => {
-                    let account = Account::from_json(json).map_err(|e| format!("учетная запись на сервере: {e}"))?;
+                    let account = Account::from_json(json)
+                        .map_err(|e| tr!("the account on the server: {e}", "учетная запись на сервере: {e}"))?;
                     shared.account.refresh(&account).map_err(|e| e.to_string())?
                 }
                 None => AccountSync::Publish,
@@ -1031,11 +1093,12 @@ impl Syncer {
             if state == AccountSync::Foreign {
                 shared.connection = Connection::Conflict;
                 shared.engine.disconnected();
-                return Err(
+                return Err(tr!(
+                    "the server has a different vault account, sync stopped: \
+                     resolve the conflict in the web or Android client and run inkvault login again",
                     "на сервере другая учетная запись хранилища, синхронизация остановлена: \
                      решите конфликт в web- или Android-клиенте и выполните inkvault login заново"
-                        .to_owned(),
-                );
+                ));
             }
             (state, shared.account.account().to_json_string())
         };
@@ -1044,17 +1107,28 @@ impl Syncer {
         }
         match state {
             AccountSync::Publish => {
-                self.xmpp
-                    .publish_account(&json)
-                    .await
-                    .map_err(|e| format!("учетная запись не опубликована: {e}"))?;
+                self.xmpp.publish_account(&json).await.map_err(|e| {
+                    tr!(
+                        "the account was not published: {e}",
+                        "учетная запись не опубликована: {e}"
+                    )
+                })?;
                 self.notice(if server.is_some() {
-                    "на сервере была старая копия учетной записи, опубликована актуальная".to_owned()
+                    tr!(
+                        "the server had an old copy of the account, the current one was published",
+                        "на сервере была старая копия учетной записи, опубликована актуальная"
+                    )
                 } else {
-                    "учетная запись восстановлена на сервере".to_owned()
+                    tr!(
+                        "the account was restored on the server",
+                        "учетная запись восстановлена на сервере"
+                    )
                 });
             }
-            AccountSync::Updated => self.notice("учетная запись обновлена с сервера".to_owned()),
+            AccountSync::Updated => self.notice(tr!(
+                "the account was updated from the server",
+                "учетная запись обновлена с сервера"
+            )),
             AccountSync::Same | AccountSync::Foreign => {}
         }
         Ok(())
@@ -1100,10 +1174,10 @@ impl Syncer {
         match snapshot.map_err(|e| e.to_string()) {
             Ok(data) => {
                 if let Err(err) = self.store.save_snapshot(&vault_id, &data, unsent) {
-                    self.notice(format!("кэш не сохранен: {err}"));
+                    self.notice(cache_not_saved(&err));
                 }
             }
-            Err(err) => self.notice(format!("кэш не сохранен: {err}")),
+            Err(err) => self.notice(cache_not_saved(&err)),
         }
         result
     }
@@ -1115,10 +1189,10 @@ impl Syncer {
                 let max_items = match self.xmpp.node_max_items(&node).await {
                     Ok(max_items) => max_items,
                     Err(IqError::Stanza(err)) => {
-                        self.notice(format!("настройки узла не прочитаны: {}", xmpp::condition(&err)));
+                        self.notice(config_not_read(&xmpp::condition(&err)));
                         None
                     }
-                    Err(err) => return Err(format!("настройки узла не прочитаны: {err}")),
+                    Err(err) => return Err(config_not_read(&err)),
                 };
                 self.shared().engine.config_fetched(request, max_items)
             }
@@ -1127,7 +1201,7 @@ impl Syncer {
                     .xmpp
                     .fetch(&node)
                     .await
-                    .map_err(|e| format!("записи не загружены: {e}"))?;
+                    .map_err(|e| tr!("the items were not loaded: {e}", "записи не загружены: {e}"))?;
                 self.shared().engine.items_fetched(items, now_ms())
             }
             Command::Publish {
@@ -1140,7 +1214,7 @@ impl Syncer {
                     .xmpp
                     .publish(&node, max_items, &item)
                     .await
-                    .map_err(|e| format!("запись не опубликована: {e}"))?;
+                    .map_err(|e| tr!("the item was not published: {e}", "запись не опубликована: {e}"))?;
                 self.shared()
                     .engine
                     .publish_result(request, PublishOutcome::from_error(error.as_deref()))
@@ -1153,10 +1227,10 @@ impl Syncer {
                 let ok = match self.xmpp.configure(&node, max_items).await {
                     Ok(()) => true,
                     Err(IqError::Stanza(err)) => {
-                        self.notice(format!("настройки узла не изменены: {}", xmpp::condition(&err)));
+                        self.notice(config_not_changed(&xmpp::condition(&err)));
                         false
                     }
-                    Err(err) => return Err(format!("настройки узла не изменены: {err}")),
+                    Err(err) => return Err(config_not_changed(&err)),
                 };
                 self.shared().engine.configure_result(request, ok)
             }
@@ -1164,32 +1238,61 @@ impl Syncer {
     }
 }
 
+fn no_name() -> String {
+    tr!("the item has no name", "у записи нет названия")
+}
+
+fn cache_not_saved(err: &str) -> String {
+    tr!("the cache was not saved: {err}", "кэш не сохранен: {err}")
+}
+
+fn config_not_read(err: &dyn std::fmt::Display) -> String {
+    tr!(
+        "the node settings were not read: {err}",
+        "настройки узла не прочитаны: {err}"
+    )
+}
+
+fn config_not_changed(err: &dyn std::fmt::Display) -> String {
+    tr!(
+        "the node settings were not changed: {err}",
+        "настройки узла не изменены: {err}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
+    use inkvault_core::sync::WarningReason;
+
     use super::*;
 
+    // язык процесса в тестах не меняется: они идут параллельно, тексты - на английском по умолчанию
     #[test]
     fn warnings_are_summarized_per_kind() {
-        let warning = |kind, detail: &str| Event::Warning {
-            kind,
+        let warning = |reason: WarningReason, detail: &str| Event::Warning {
+            kind: reason.kind(),
             item_id: None,
             detail: detail.to_owned(),
+            reason,
+        };
+        let unreadable = || WarningReason::Unreadable {
+            error: "decrypt_failed".to_owned(),
         };
         let mut warnings = Warnings::default();
         warnings.add(&[
-            warning(WarningKind::Unreadable, "расшифровка не удалась"),
-            warning(WarningKind::Unreadable, "расшифровка не удалась"),
-            warning(WarningKind::ClockAhead, "метка опережает часы"),
+            warning(unreadable(), "decryption failed"),
+            warning(unreadable(), "decryption failed"),
+            warning(WarningReason::ClockAhead { hlc: "0".to_owned() }, "timestamp is ahead"),
             Event::Synced,
         ]);
         let summaries: Vec<String> = warnings.summaries().collect();
         assert_eq!(
             summaries,
             vec![
-                "записей с сервера не удалось прочитать: 2 (расшифровка не удалась)".to_owned(),
-                "метка опережает часы".to_owned(),
+                "items from the server that could not be read: 2 (decryption failed)".to_owned(),
+                "timestamp is ahead".to_owned(),
             ]
         );
     }

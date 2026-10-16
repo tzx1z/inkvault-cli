@@ -5,6 +5,8 @@
 # bindings/build.sh wasm и npm ci в testkit/vault.
 set -eu
 cd "$(dirname "$0")/.."
+# сценарий сверяет русские тексты CLI; язык CLI берется из LC_ALL, установленная локаль ему не нужна
+export LC_ALL=ru_RU.UTF-8
 ROOT=$(pwd)
 CORE=$(cd "${INKVAULT_CORE:-$ROOT/../inkvault-core}" && pwd)
 VAULT="$CORE/testkit/vault/vault.mjs"
@@ -232,7 +234,7 @@ echo "--- смена мастер-пароля на другом клиенте"
 MASTER_PASSWORD=$MASTER NEW_MASTER_PASSWORD=$NEW_MASTER vault passwd
 cli sync
 cli lock
-check "блокировка" "хранилище заблокировано" "$(cli status)"
+check "блокировка" "$(printf 'Учетная запись: alice@vault.test\nхранилище заблокировано')" "$(cli status)"
 check_fails "заблокировано без терминала" "хранилище заблокировано" cli get github.com
 check_fails "старый мастер-пароль" "неверный мастер-пароль" sh -c "printf '%s\n' '$MASTER' | setsid -w '$INKVAULT' unlock --password-stdin"
 printf '%s\n' "$NEW_MASTER" | cli unlock --password-stdin
@@ -245,8 +247,9 @@ check_fails "смена с неверным текущим паролем" "не
 cli lock
 check "смена мастер-пароля" "мастер-пароль изменен" \
     "$(printf '%s\n%s\n' "$NEW_MASTER" "$CLI_MASTER" | cli passwd --password-stdin 2>&1)"
-check_fails "другой клиент: прежний мастер-пароль после смены в CLI" "неверный мастер-пароль" \
-    env MASTER_PASSWORD="$NEW_MASTER" node "$VAULT" list
+# другой клиент - утилита ядра на WASM, ее тексты ошибок на языке ядра по умолчанию
+check_fails "другой клиент: прежний мастер-пароль после смены в CLI" "wrong master password" \
+    env LC_ALL=C MASTER_PASSWORD="$NEW_MASTER" node "$VAULT" list
 MASTER_PASSWORD=$CLI_MASTER vault add '{"name":"after-passwd","username":"dave","password":"y"}'
 wait_for "другой клиент открывает хранилище паролем из CLI" dave 15 cli get after-passwd -f username
 cli lock
