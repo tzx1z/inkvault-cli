@@ -1,19 +1,20 @@
 #!/bin/sh
 # Сквозная проверка CLI на тестовом Prosody: хранилище и записи создает другой клиент
-# (testkit/vault/vault.mjs из inkvault-core, ядро в WASM), CLI читает их через агент.
-# Нужен checkout inkvault-core (по умолчанию рядом, иначе путь в INKVAULT_CORE) с выполненными
-# bindings/build.sh wasm и npm ci в testkit/vault.
+# (vault.mjs из @inkov-dev/inkvault-testkit, ядро в WASM), CLI читает их через агент.
+# Нужны npm ci в tests и podman login registry.gitlab.com.
 set -eu
 cd "$(dirname "$0")/.."
 # сценарий сверяет русские тексты CLI; язык CLI берется из LC_ALL, установленная локаль ему не нужна
 export LC_ALL=ru_RU.UTF-8
 ROOT=$(pwd)
-CORE=$(cd "${INKVAULT_CORE:-$ROOT/../inkvault-core}" && pwd)
-VAULT="$CORE/testkit/vault/vault.mjs"
-if [ ! -f "$CORE/bindings/wasm/pkg/node/inkvault_wasm.js" ] || [ ! -d "$CORE/testkit/vault/node_modules" ]; then
-    echo "в $CORE нет сборки WASM для Node или зависимостей testkit/vault" >&2
+TESTKIT=$ROOT/tests/node_modules/@inkov-dev/inkvault-testkit
+VAULT="$TESTKIT/vault.mjs"
+if [ ! -f "$VAULT" ]; then
+    echo "нет зависимостей теста, нужен npm ci в tests" >&2
     exit 1
 fi
+# образ тестового Prosody той же версии ядра, что и @inkov-dev/inkvault-testkit
+IMAGE=registry.gitlab.com/inkvault/inkvault-core/test-prosody:$(node -p "require('$TESTKIT/package.json').version")
 CONTAINER=inkvault-cli-e2e
 SERVER=tcp://127.0.0.1:15222
 MASTER="correct horse battery staple"
@@ -107,10 +108,10 @@ in_tty() {
 connection() { cli status --json | python3 -I -c 'import json, sys; print(json.load(sys.stdin)["connection"]["state"])'; }
 pending() { cli status --json | python3 -I -c 'import json, sys; print(json.load(sys.stdin)["pending"])'; }
 
-podman image exists inkvault-test-prosody || podman build -q -t inkvault-test-prosody "$CORE/testkit/prosody" >/dev/null
+podman image exists "$IMAGE" || podman pull -q "$IMAGE" >/dev/null
 podman rm -f "$CONTAINER" >/dev/null 2>&1 || true
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-podman run -d --name "$CONTAINER" -p 127.0.0.1:15222:5222 -p 127.0.0.1:15280:5280 inkvault-test-prosody >/dev/null
+podman run -d --name "$CONTAINER" -p 127.0.0.1:15222:5222 -p 127.0.0.1:15280:5280 "$IMAGE" >/dev/null
 wait_server "$since"
 
 MASTER_PASSWORD=$MASTER vault setup

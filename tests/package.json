@@ -1,0 +1,8 @@
+{
+  "name": "inkvault-cli-tests",
+  "private": true,
+  "description": "Зависимости сквозного теста: тестовое хранилище и ядро в WASM для Node",
+  "devDependencies": {
+    "@inkov-dev/inkvault-testkit": "0.2.1"
+  }
+}

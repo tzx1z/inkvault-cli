@@ -871,8 +871,8 @@ dependencies = [
 
 [[package]]
 name = "inkvault-core"
-version = "0.2.0"
-source = "git+https://gitlab.com/inkvault/inkvault-core.git?tag=v0.2.0#88074ab335bd662d0c9c1db65f598125065f4d0b"
+version = "0.2.1"
+source = "git+https://gitlab.com/inkvault/inkvault-core.git?tag=v0.2.1#39c42e6d07a391d488e54d7ba09b9c92bbb6642a"
 dependencies = [
  "argon2",
  "base64 0.23.1",

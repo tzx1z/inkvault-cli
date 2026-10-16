@@ -196,10 +196,12 @@ python3 -I tools/licenses.py   # лицензии зависимостей
 cargo build --config 'patch."https://gitlab.com/inkvault/inkvault-core.git".inkvault-core.path="../inkvault-core/core"'
 ```
 
-Сквозной тест на тестовом Prosody: хранилище создает Node-утилита ядра, CLI работает с ним через агент. Нужны podman и checkout `inkvault-core` рядом с этим репозиторием (или путь в `INKVAULT_CORE`):
+Сквозной тест на тестовом Prosody: хранилище создает Node-утилита ядра `@inkov-dev/inkvault-testkit`, CLI работает с ним через агент. Утилита и образ тестового сервера `registry.gitlab.com/inkvault/inkvault-core/test-prosody` той же версии загружаются из реестров GitLab. Нужны podman, Node.js 22 и токен GitLab: personal access token со scope `read_api` и `read_registry` или deploy token со scope `read_package_registry` и `read_registry`:
 
 ```sh
-(cd ../inkvault-core && bindings/build.sh wasm && cd testkit/vault && npm ci)
+podman login registry.gitlab.com                                          # один раз
+npm config set -- //gitlab.com/api/v4/projects/inkvault%2Finkvault-core/packages/npm/:_authToken <токен>    # один раз
+(cd tests && npm ci)
 tests/e2e.sh
 ```
 
