@@ -1,4 +1,0 @@
-# Ядро загружается системным git, а не встроенным в Cargo libgit2: системный git берет SSH-ключи,
-# ~/.ssh/config и подмену адресов url.*.insteadOf, без них закрытый репозиторий не загрузить
-[net]
-git-fetch-with-cli = true

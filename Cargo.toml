@@ -1,20 +1,24 @@
 [package]
 name = "inkvault-cli"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Evgeny Inkov <me@inkov.dev>"]
 edition = "2024"
 license = "AGPL-3.0-only"
 rust-version = "1.85"
-description = "Терминальный клиент InkVault: менеджер паролей с синхронизацией через XMPP"
-repository = "https://gitlab.com/inkvault/inkvault-cli"
+description = "Terminal client for InkVault, a self-hosted password manager with end-to-end encryption and sync over XMPP"
+repository = "https://github.com/tzx1z/inkvault-cli"
 homepage = "https://inkov.dev"
+keywords = ["password-manager", "xmpp", "cli", "e2ee", "totp"]
+categories = ["command-line-utilities", "cryptography"]
+# сквозной тест, CI и проверка лицензий в крейт не входят
+include = ["/src", "/README.md", "/LICENSE"]
 
 [[bin]]
 name = "inkvault"
 path = "src/main.rs"
 
 [dependencies]
-inkvault-core = { git = "https://gitlab.com/inkvault/inkvault-core.git", tag = "v0.2.1" }
+inkvault-core = "0.2.1"
 base64 = "0.23"
 clap = { version = "4.6", features = ["derive"] }
 directories = "6"

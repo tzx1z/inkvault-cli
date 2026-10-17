@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "inkvault-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -872,7 +872,8 @@ dependencies = [
 [[package]]
 name = "inkvault-core"
 version = "0.2.1"
-source = "git+https://gitlab.com/inkvault/inkvault-core.git?tag=v0.2.1#39c42e6d07a391d488e54d7ba09b9c92bbb6642a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6109153d9ffc05afe44442875cbc5c26ff829f2a0a3e774797775155be85567"
 dependencies = [
  "argon2",
  "base64 0.23.1",

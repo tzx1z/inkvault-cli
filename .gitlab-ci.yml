@@ -1,0 +1,166 @@
+# Пайплайн CLI. На коммит в main и в merge request - форматирование, тесты и проверка лицензий.
+# По тегу vX.Y.Z - статические бинарники для Linux x86_64 и aarch64, крейт inkvault-cli на crates.io,
+# затем коммит тега, тег и релиз с архивами на GitHub.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+
+stages: [test, build, publish]
+
+variables:
+  RUST_IMAGE: docker.io/library/rust:1.99.1-trixie
+  # в Alpine musl - родная платформа: бинарник собирается статическим без кросс-компилятора,
+  # gcc и musl-dev для C-кода ring уже есть в образе
+  MUSL_IMAGE: docker.io/library/rust:1.99.1-alpine3.24
+  GIT_IMAGE: docker.io/library/buildpack-deps:trixie-scm
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
+  GITHUB_REPO: tzx1z/inkvault-cli
+
+default:
+  interruptible: true
+
+.cargo-cache: &cargo-cache
+  key:
+    files: [Cargo.lock]
+    prefix: cargo
+  paths:
+    - .cargo-home/registry/index/
+    - .cargo-home/registry/cache/
+
+test:
+  stage: test
+  image: $RUST_IMAGE
+  cache: [*cargo-cache]
+  script:
+    # архивы, крейт и релиз получают номер из тега, он должен совпадать с Cargo.toml
+    - |
+      if [ -n "${CI_COMMIT_TAG:-}" ]; then
+        version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+        if [ "$CI_COMMIT_TAG" != "v$version" ]; then
+          echo "тег $CI_COMMIT_TAG не совпадает с версией $version в Cargo.toml" >&2
+          exit 1
+        fi
+      fi
+    - rustup component add rustfmt
+    - cargo fmt --check
+    - cargo test --locked
+    # licenses.py читает cargo metadata со всеми возможностями пакетов без сети
+    - cargo fetch --locked
+    - python3 -I tools/licenses.py
+
+.binary:
+  stage: build
+  image: $MUSL_IMAGE
+  needs: []
+  cache: [*cargo-cache]
+  script:
+    - cargo build --release --locked --target "$TARGET"
+    - bin="target/$TARGET/release/inkvault"
+    # grep без -q дочитывает вывод: с pipefail ранний выход grep завершил бы readelf по SIGPIPE
+    - |
+      if readelf -d "$bin" | grep NEEDED >/dev/null; then
+        echo "$bin собран с динамическими библиотеками" >&2
+        exit 1
+      fi
+    - name="inkvault-cli-${CI_COMMIT_TAG#v}-$TARGET"
+    - mkdir "$name"
+    - cp "$bin" LICENSE README.md "$name/"
+    - tar -czf "$name.tar.gz" "$name"
+  artifacts:
+    paths: [inkvault-cli-*.tar.gz]
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_TAG
+
+binary-x86_64:
+  extends: .binary
+  variables:
+    TARGET: x86_64-unknown-linux-musl
+
+# у Alpine-образа есть вариант arm64, бинарник собирается на arm64-раннере без эмуляции
+binary-aarch64:
+  extends: .binary
+  tags: [saas-linux-small-arm64]
+  variables:
+    TARGET: aarch64-unknown-linux-musl
+
+.publish:
+  stage: publish
+  interruptible: false
+  rules:
+    - if: $CI_COMMIT_TAG
+
+# Trusted Publishing: crates.io меняет OIDC-токен задания на токен публикации на 30 минут.
+# Издатель в настройках крейта на crates.io: GitLab, inkvault/inkvault-cli, .gitlab-ci.yml
+publish-crates:
+  extends: .publish
+  image: $RUST_IMAGE
+  needs:
+    - test
+    - job: binary-x86_64
+      artifacts: false
+    - job: binary-aarch64
+      artifacts: false
+  cache: [*cargo-cache]
+  id_tokens:
+    CRATES_IO_ID_TOKEN:
+      aud: crates.io
+  variables:
+    CRATES_IO_API: https://crates.io/api/v1
+    # crates.io отклоняет запросы без User-Agent
+    CRATES_IO_USER_AGENT: "inkvault-ci (me@inkov.dev)"
+  script:
+    - version=${CI_COMMIT_TAG#v}
+    - |
+      if curl -fsS -A "$CRATES_IO_USER_AGENT" "$CRATES_IO_API/crates/inkvault-cli/$version" >/dev/null 2>&1; then
+        echo "inkvault-cli $version уже опубликован"
+        exit 0
+      fi
+    # в ответе с ошибкой токена нет, его можно выводить в лог
+    - |
+      response=$(curl -sS -X POST "$CRATES_IO_API/trusted_publishing/tokens" -A "$CRATES_IO_USER_AGENT" \
+        -H "Content-Type: application/json" -d "{\"jwt\": \"$CRATES_IO_ID_TOKEN\"}")
+      token=$(printf '%s' "$response" | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("token", ""))' || true)
+      if [ -z "$token" ]; then
+        echo "crates.io не выдал токен публикации: $response" >&2
+        exit 1
+      fi
+      status=0
+      CARGO_REGISTRY_TOKEN=$token cargo publish --locked || status=$?
+      curl -fsS -X DELETE "$CRATES_IO_API/trusted_publishing/tokens" -A "$CRATES_IO_USER_AGENT" \
+        -H "Authorization: Bearer $token" || true
+      exit $status
+
+# GH_TOKEN - защищенная маскированная переменная CI/CD, поэтому теги v* должны быть защищенными
+publish-github:
+  extends: .publish
+  image: $GIT_IMAGE
+  needs: [binary-x86_64, binary-aarch64, publish-crates]
+  variables:
+    # на GitHub уходит вся история тега
+    GIT_DEPTH: "0"
+    GH_VERSION: "2.97.0"
+    GH_SHA256: a2c9b8497e1f85b1ad0dfcb78b5a622e098801b8e461e459e88e1ee12f018112
+  before_script:
+    - curl -fsSLo /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+    - echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c -
+    - tar -xzf /tmp/gh.tar.gz -C /usr/local --strip-components=1 "gh_${GH_VERSION}_linux_amd64/bin/gh"
+  script:
+    - sha256sum inkvault-cli-*.tar.gz >SHA256SUMS
+    - gh auth setup-git
+    # main на GitHub только догоняет тег: если он ушел вперед или в сторону, push отклоняется
+    - git push "https://github.com/$GITHUB_REPO.git" "$CI_COMMIT_SHA:refs/heads/main" "refs/tags/$CI_COMMIT_TAG"
+    # повторный запуск не создает второй релиз; текст релиза - аннотация тега
+    - |
+      if gh release view "$CI_COMMIT_TAG" -R "$GITHUB_REPO" >/dev/null 2>&1; then
+        echo "релиз $CI_COMMIT_TAG на GitHub уже есть"
+      else
+        notes=$(git tag -l --format='%(contents)' "$CI_COMMIT_TAG")
+        gh release create "$CI_COMMIT_TAG" -R "$GITHUB_REPO" --verify-tag \
+          --title "${CI_COMMIT_TAG#v}" --notes "${notes:-$CI_COMMIT_TAG}" inkvault-cli-*.tar.gz SHA256SUMS
+      fi
+  rules:
+    - if: $CI_COMMIT_TAG && $GH_TOKEN
